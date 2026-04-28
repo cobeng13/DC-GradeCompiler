@@ -1,10 +1,14 @@
 # Python caches
 __pycache__/
 *.py[cod]
+midterm_report_tool/.test_tmp/
 
 # Generated reports
 midterm_report_tool/output/*
 !midterm_report_tool/output/.gitkeep
+
+# Local database
+midterm_report_tool/data/
 
 # Local grading inputs and private roster data
 midterm_report_tool/input/grades/*

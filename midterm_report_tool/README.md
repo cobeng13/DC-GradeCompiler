@@ -1,6 +1,9 @@
 # Midterm Report Tool
 
-This CLI tool reads standard Excel grading sheets and generates midterm reports.
+This tool ingests Excel grading sheets into a local SQLite database and generates
+midterm reports from the stored data. It keeps issue rows for files that do not
+match the expected template, so faculty uploads can be reviewed without crashing
+the workflow.
 
 ## 1. Where to place files
 
@@ -25,7 +28,9 @@ Name
 StudentNumber or ClassNumber
 ```
 
-The tool uses the masterlist only to fill missing or blank student numbers in the grading sheets.
+The tool uses the masterlist as the only trusted source for student numbers.
+Student numbers typed into grading sheets are ignored because faculty files may
+contain incorrect IDs.
 
 ## 2. Expected filename pattern
 
@@ -50,7 +55,7 @@ The report parses:
 
 If a filename does not match this pattern, the report leaves `Section` and `Course` blank and adds a note.
 
-## 3. How to run the tool
+## 3. How to run the CLI
 
 Install dependencies:
 
@@ -72,6 +77,7 @@ Default settings:
 - Pass/fail matrix file: `output/midterm_exam_pass_fail_report.xlsx`
 - Midterm grade matrix file: `output/midterm_grade_report.xlsx`
 - Passing grade: `75`
+- SQLite database: `data/grade_compiler.sqlite3`
 
 Run with custom paths or passing grade:
 
@@ -79,7 +85,51 @@ Run with custom paths or passing grade:
 python main.py --input input/grades --masterlist input/masterlist/masterlist.csv --output output/passed_midterm_report.xlsx --pass-fail-output output/midterm_exam_pass_fail_report.xlsx --grade-output output/midterm_grade_report.xlsx --passing-grade 75
 ```
 
-## 4. How passing is computed
+Export reports from the latest saved database batch without re-reading Excel:
+
+```bash
+python main.py --export-only
+```
+
+Export a specific batch:
+
+```bash
+python main.py --export-only --batch-id 3
+```
+
+## 4. How to run the UI
+
+Install dependencies, then run:
+
+```bash
+streamlit run app.py
+```
+
+The UI has three tabs:
+
+- `Ingest`: run an ingest from the input folder or uploaded workbooks.
+- `Review`: inspect batches, normalized grade records, and issues.
+- `Export`: generate the Excel reports from a selected batch.
+
+## 5. How to reset test state
+
+To preview generated files that would be removed:
+
+```bash
+python reset_test_state.py --dry-run
+```
+
+To reset generated test/run state without deleting grading inputs or the masterlist:
+
+```bash
+python reset_test_state.py --yes
+```
+
+This removes the local SQLite database, generated reports, Streamlit logs, test
+scratch folders, and Python caches. It preserves files under `input/grades/` and
+`input/masterlist/` by default.
+
+## 6. How passing is computed
 
 The tool detects columns by Row 1 headers using flexible aliases.
 
@@ -89,7 +139,11 @@ Required processable columns:
 - `MidtermExam`
 - `MidtermGrade`
 
-`StudentNumber` is also detected when present. If it is missing or blank, passed rows are still included. The tool tries to fill the missing number from `input/masterlist/masterlist.csv` by matching `StudentName` to masterlist `Name`.
+`StudentNumber` may be detected when present, but it is not trusted. Passed rows
+are still included, and the tool fills the canonical student number only from
+`input/masterlist/masterlist.csv` by matching `StudentName` to masterlist `Name`.
+If no masterlist match is found, the student number is left blank and a note is
+added to the row.
 
 Name matching is normalized exact matching:
 
@@ -105,7 +159,7 @@ MidtermGrade >= passing grade
 
 By default, the passing grade is `75`.
 
-## 5. Midterm Exam Pass/Fail Report
+## 7. Midterm Exam Pass/Fail Report
 
 The tool also creates two matrix reports:
 
@@ -124,7 +178,7 @@ These workbooks use the same matrix layout:
 - Pass/fail course cells contain `Passed`, `Fail`, or blank when no result exists.
 - Midterm grade course cells contain the numeric `MidtermGrade`, or blank when no result exists.
 
-## 6. What the Issues sheet means
+## 8. What the Issues sheet means
 
 The `Issues` sheet records rows or files that need attention, including:
 
@@ -135,6 +189,7 @@ The `Issues` sheet records rows or files that need attention, including:
 - Missing `StudentNumber` columns.
 - Missing or invalid `masterlist.csv`.
 - Missing input files or input folder.
+- Duplicate student/course rows in one batch.
 
 The output workbook contains:
 
@@ -142,3 +197,14 @@ The output workbook contains:
 - `Issues`: rows and files that could not be processed cleanly.
 
 The separate matrix workbooks contain one sheet per year level.
+
+## 9. Database-backed workflow
+
+Each run creates an ingest batch. The database stores:
+
+- Source files and whether they had processable sheets.
+- Students and courses discovered during ingest.
+- Normalized grade records.
+- Issues for rows/files that need review.
+
+Reports are generated from the database, not directly from Excel, after ingest.
