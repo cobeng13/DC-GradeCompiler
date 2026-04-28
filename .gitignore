@@ -1,0 +1,18 @@
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Generated reports
+midterm_report_tool/output/*
+!midterm_report_tool/output/.gitkeep
+
+# Local grading inputs and private roster data
+midterm_report_tool/input/grades/*
+!midterm_report_tool/input/grades/.gitkeep
+midterm_report_tool/input/masterlist/*
+!midterm_report_tool/input/masterlist/.gitkeep
+
+# Root-level sample/private files
+Sample Grading Sheet.xlsm
+Sample Masterlist.csv
+testdoc.txt
