@@ -1,6 +1,6 @@
 # Midterm Report Tool
 
-This CLI tool reads standard Excel grading sheets and generates one report of students who passed the midterm.
+This CLI tool reads standard Excel grading sheets and generates midterm reports.
 
 ## 1. Where to place files
 
@@ -69,12 +69,14 @@ Default settings:
 - Input folder: `input/grades`
 - Masterlist file: `input/masterlist/masterlist.csv`
 - Output file: `output/passed_midterm_report.xlsx`
+- Pass/fail matrix file: `output/midterm_exam_pass_fail_report.xlsx`
+- Midterm grade matrix file: `output/midterm_grade_report.xlsx`
 - Passing grade: `75`
 
 Run with custom paths or passing grade:
 
 ```bash
-python main.py --input input/grades --masterlist input/masterlist/masterlist.csv --output output/passed_midterm_report.xlsx --passing-grade 75
+python main.py --input input/grades --masterlist input/masterlist/masterlist.csv --output output/passed_midterm_report.xlsx --pass-fail-output output/midterm_exam_pass_fail_report.xlsx --grade-output output/midterm_grade_report.xlsx --passing-grade 75
 ```
 
 ## 4. How passing is computed
@@ -103,7 +105,26 @@ MidtermGrade >= passing grade
 
 By default, the passing grade is `75`.
 
-## 5. What the Issues sheet means
+## 5. Midterm Exam Pass/Fail Report
+
+The tool also creates two matrix reports:
+
+```text
+output/midterm_exam_pass_fail_report.xlsx
+output/midterm_grade_report.xlsx
+```
+
+These workbooks use the same matrix layout:
+
+- One sheet per year level, such as `Year1`, `Year2`, and `Year3`.
+- Year level is inferred from the first number in the section, such as `1A` or `2B`.
+- Students with no known section are placed in `Unassigned`.
+- Rows come from the masterlist, plus any students found in grading sheets when the masterlist is missing or incomplete.
+- Columns are `Name`, `Section`, then one column per course found from grading filenames.
+- Pass/fail course cells contain `Passed`, `Fail`, or blank when no result exists.
+- Midterm grade course cells contain the numeric `MidtermGrade`, or blank when no result exists.
+
+## 6. What the Issues sheet means
 
 The `Issues` sheet records rows or files that need attention, including:
 
@@ -119,3 +140,5 @@ The output workbook contains:
 
 - `PassedStudents`: all passing students and their midterm grades.
 - `Issues`: rows and files that could not be processed cleanly.
+
+The separate matrix workbooks contain one sheet per year level.

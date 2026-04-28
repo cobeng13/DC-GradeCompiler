@@ -67,6 +67,12 @@ MASTERLIST_ID_ALIASES = [
     "Class Number",
 ]
 
+MASTERLIST_SECTION_ALIASES = [
+    "Section",
+    "Class",
+    "Class Section",
+]
+
 
 def parse_filename(filename: str) -> Tuple[str, str, Optional[str]]:
     """Parse Section and Course from names like 2A_OrgMedChem.xlsm."""
@@ -179,10 +185,14 @@ def find_header_by_alias(header_map: Dict[str, str], aliases: List[str]) -> Opti
     return None
 
 
-def load_masterlist(masterlist_path: Path) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
-    """Load masterlist.csv into a normalized-name to student-number lookup."""
+def load_masterlist(
+    masterlist_path: Path,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Load masterlist.csv into lookup data and ordered student records."""
     issues: List[Dict[str, Any]] = []
     masterlist: Dict[str, Any] = {}
+    masterlist_records: List[Dict[str, Any]] = []
+    record_indexes: Dict[str, int] = {}
 
     if not masterlist_path.exists():
         issues.append(
@@ -193,7 +203,7 @@ def load_masterlist(masterlist_path: Path) -> Tuple[Dict[str, Any], List[Dict[st
                 f"Masterlist file does not exist: {masterlist_path}",
             )
         )
-        return masterlist, issues
+        return masterlist, masterlist_records, issues
 
     try:
         with masterlist_path.open("r", newline="", encoding="utf-8-sig") as file_obj:
@@ -213,7 +223,7 @@ def load_masterlist(masterlist_path: Path) -> Tuple[Dict[str, Any], List[Dict[st
                         "Masterlist has no header row.",
                     )
                 )
-                return masterlist, issues
+                return masterlist, masterlist_records, issues
 
             header_map = {
                 normalize_header(header): header for header in reader.fieldnames if header
@@ -222,6 +232,7 @@ def load_masterlist(masterlist_path: Path) -> Tuple[Dict[str, Any], List[Dict[st
             student_number_column = find_header_by_alias(
                 header_map, MASTERLIST_ID_ALIASES
             )
+            section_column = find_header_by_alias(header_map, MASTERLIST_SECTION_ALIASES)
 
             if not name_column or not student_number_column:
                 issues.append(
@@ -232,11 +243,12 @@ def load_masterlist(masterlist_path: Path) -> Tuple[Dict[str, Any], List[Dict[st
                         "Masterlist must contain Name and an ID column such as StudentNumber or ClassNumber.",
                     )
                 )
-                return masterlist, issues
+                return masterlist, masterlist_records, issues
 
             for row_number, row in enumerate(reader, start=2):
                 raw_name = row.get(name_column)
                 raw_student_number = row.get(student_number_column)
+                raw_section = row.get(section_column) if section_column else ""
                 normalized_name = normalize_name(raw_name)
 
                 if not normalized_name:
@@ -247,9 +259,29 @@ def load_masterlist(masterlist_path: Path) -> Tuple[Dict[str, Any], List[Dict[st
                         raw_student_number
                     ):
                         masterlist[normalized_name] = raw_student_number
+                        masterlist_records[record_indexes[normalized_name]][
+                            "StudentNumber"
+                        ] = raw_student_number
+                    if is_blank(
+                        masterlist_records[record_indexes[normalized_name]][
+                            "Section"
+                        ]
+                    ) and not is_blank(raw_section):
+                        masterlist_records[record_indexes[normalized_name]][
+                            "Section"
+                        ] = raw_section
                     continue
 
                 masterlist[normalized_name] = raw_student_number
+                record_indexes[normalized_name] = len(masterlist_records)
+                masterlist_records.append(
+                    {
+                        "StudentName": raw_name,
+                        "StudentNumber": raw_student_number,
+                        "Section": raw_section,
+                        "NormalizedName": normalized_name,
+                    }
+                )
     except Exception as exc:
         issues.append(
             issue_row(
@@ -260,7 +292,7 @@ def load_masterlist(masterlist_path: Path) -> Tuple[Dict[str, Any], List[Dict[st
             )
         )
 
-    return masterlist, issues
+    return masterlist, masterlist_records, issues
 
 
 def find_masterlist_student_number(
@@ -298,10 +330,10 @@ def process_workbook(
     workbook_path: Path, passing_grade: float, masterlist: Dict[str, Any]
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], bool]:
     """
-    Read a grading workbook and return passed student rows, issue rows, and
+    Read a grading workbook and return valid result rows, issue rows, and
     whether at least one worksheet was processable.
     """
-    passed_students: List[Dict[str, Any]] = []
+    result_rows: List[Dict[str, Any]] = []
     issues: List[Dict[str, Any]] = []
     source_file = workbook_path.name
     section, course, filename_note = parse_filename(source_file)
@@ -322,7 +354,7 @@ def process_workbook(
                 f"Could not open workbook: {exc}",
             )
         )
-        return passed_students, issues, False
+        return result_rows, issues, False
 
     processed_any_sheet = False
 
@@ -390,9 +422,6 @@ def process_workbook(
                 )
                 continue
 
-            if grade < passing_grade:
-                continue
-
             notes = []
             if filename_note:
                 notes.append(filename_note)
@@ -417,7 +446,7 @@ def process_workbook(
                 else:
                     notes.append("StudentNumber is blank; no masterlist match.")
 
-            passed_students.append(
+            result_rows.append(
                 {
                     "SourceFile": source_file,
                     "Section": section,
@@ -426,7 +455,7 @@ def process_workbook(
                     "StudentName": raw_student_name,
                     "MidtermExam": raw_midterm_exam,
                     "MidtermGrade": grade,
-                    "Status": "Passed",
+                    "Status": "Passed" if grade >= passing_grade else "Fail",
                     "Notes": " ".join(notes),
                 }
             )
@@ -443,7 +472,7 @@ def process_workbook(
             )
         )
 
-    return passed_students, issues, processed_any_sheet
+    return result_rows, issues, processed_any_sheet
 
 
 def write_sheet(workbook: Workbook, title: str, columns: List[str], rows: List[Dict[str, Any]]) -> None:
@@ -460,19 +489,190 @@ def write_sheet(workbook: Workbook, title: str, columns: List[str], rows: List[D
         )
 
 
+def year_sheet_name(section: Any) -> str:
+    if is_blank(section):
+        return "Unassigned"
+
+    match = re.match(r"\s*(\d+)", str(section))
+    if not match:
+        return "Unassigned"
+    return f"Year{match.group(1)}"
+
+
+def safe_sheet_title(title: str, used_titles: set) -> str:
+    safe_title = re.sub(r"[\[\]:*?/\\]", "_", title)[:31] or "Sheet"
+    candidate = safe_title
+    suffix = 1
+
+    while candidate in used_titles:
+        suffix_text = f"_{suffix}"
+        candidate = f"{safe_title[:31 - len(suffix_text)]}{suffix_text}"
+        suffix += 1
+
+    used_titles.add(candidate)
+    return candidate
+
+
+def build_matrix_students(
+    masterlist_records: List[Dict[str, Any]], result_rows: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    students: List[Dict[str, Any]] = []
+    indexes: Dict[str, int] = {}
+
+    for record in masterlist_records:
+        normalized_name = record.get("NormalizedName") or normalize_name(
+            record.get("StudentName")
+        )
+        if not normalized_name:
+            continue
+        indexes[normalized_name] = len(students)
+        students.append(
+            {
+                "StudentName": record.get("StudentName"),
+                "Section": record.get("Section"),
+                "NormalizedName": normalized_name,
+            }
+        )
+
+    # If the masterlist is missing or incomplete, still show students found in sheets.
+    for result in result_rows:
+        normalized_name = normalize_name(result.get("StudentName"))
+        if not normalized_name:
+            continue
+
+        if normalized_name not in indexes:
+            indexes[normalized_name] = len(students)
+            students.append(
+                {
+                    "StudentName": result.get("StudentName"),
+                    "Section": result.get("Section"),
+                    "NormalizedName": normalized_name,
+                }
+            )
+            continue
+
+        student = students[indexes[normalized_name]]
+        if is_blank(student.get("Section")) and not is_blank(result.get("Section")):
+            student["Section"] = result.get("Section")
+
+    return students
+
+
+def matrix_courses(result_rows: List[Dict[str, Any]]) -> List[str]:
+    courses = []
+    seen_courses = set()
+    for result in result_rows:
+        course = result.get("Course")
+        if is_blank(course) or course in seen_courses:
+            continue
+        seen_courses.add(course)
+        courses.append(course)
+    return courses
+
+
+def write_matrix_report(
+    output_file: Path,
+    masterlist_records: List[Dict[str, Any]],
+    result_rows: List[Dict[str, Any]],
+    result_lookup: Dict[Tuple[str, str], Any],
+) -> None:
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    courses = matrix_courses(result_rows)
+
+    students = build_matrix_students(masterlist_records, result_rows)
+    students_by_sheet: Dict[str, List[Dict[str, Any]]] = {}
+    for student in students:
+        sheet_name = year_sheet_name(student.get("Section"))
+        students_by_sheet.setdefault(sheet_name, []).append(student)
+
+    workbook = Workbook()
+    default_sheet = workbook.active
+    workbook.remove(default_sheet)
+
+    used_titles = set()
+    sheet_order = sorted(
+        students_by_sheet,
+        key=lambda name: (name == "Unassigned", name),
+    )
+    if not sheet_order:
+        sheet_order = ["Unassigned"]
+        students_by_sheet["Unassigned"] = []
+
+    for sheet_name in sheet_order:
+        worksheet = workbook.create_sheet(safe_sheet_title(sheet_name, used_titles))
+        columns = ["Name", "Section"] + courses
+        worksheet.append(columns)
+
+        for student in sorted(
+            students_by_sheet[sheet_name],
+            key=lambda item: (
+                str(item.get("Section") or ""),
+                str(item.get("StudentName") or ""),
+            ),
+        ):
+            normalized_name = student.get("NormalizedName")
+            row = [student.get("StudentName"), student.get("Section")]
+            row.extend(
+                result_lookup.get((normalized_name, course), "") for course in courses
+            )
+            worksheet.append(row)
+
+        for column_cells in worksheet.columns:
+            max_length = max(len(str(cell.value or "")) for cell in column_cells)
+            worksheet.column_dimensions[column_cells[0].column_letter].width = min(
+                max(max_length + 2, 12), 50
+            )
+
+    workbook.save(output_file)
+
+
+def generate_pass_fail_matrix_report(
+    output_file: Path,
+    masterlist_records: List[Dict[str, Any]],
+    result_rows: List[Dict[str, Any]],
+) -> None:
+    result_lookup: Dict[Tuple[str, str], str] = {}
+    for result in result_rows:
+        normalized_name = normalize_name(result.get("StudentName"))
+        course = result.get("Course")
+        status = result.get("Status")
+        if normalized_name and not is_blank(course) and status in {"Passed", "Fail"}:
+            result_lookup[(normalized_name, course)] = status
+
+    write_matrix_report(output_file, masterlist_records, result_rows, result_lookup)
+
+
+def generate_midterm_grade_matrix_report(
+    output_file: Path,
+    masterlist_records: List[Dict[str, Any]],
+    result_rows: List[Dict[str, Any]],
+) -> None:
+    result_lookup: Dict[Tuple[str, str], Any] = {}
+    for result in result_rows:
+        normalized_name = normalize_name(result.get("StudentName"))
+        course = result.get("Course")
+        grade = result.get("MidtermGrade")
+        if normalized_name and not is_blank(course) and not is_blank(grade):
+            result_lookup[(normalized_name, course)] = grade
+
+    write_matrix_report(output_file, masterlist_records, result_rows, result_lookup)
+
+
 def generate_report(
     input_folder: Path,
     output_file: Path,
+    pass_fail_output_file: Path,
+    grade_output_file: Path,
     passing_grade: float,
     masterlist_path: Path,
 ) -> Tuple[int, int, int]:
-    """Process all grading sheets and write the final report workbook."""
-    passed_students: List[Dict[str, Any]] = []
+    """Process all grading sheets and write the final report workbooks."""
+    result_rows: List[Dict[str, Any]] = []
     issues: List[Dict[str, Any]] = []
     files_processed = 0
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
-    masterlist, masterlist_issues = load_masterlist(masterlist_path)
+    masterlist, masterlist_records, masterlist_issues = load_masterlist(masterlist_path)
     issues.extend(masterlist_issues)
 
     if not input_folder.exists():
@@ -502,13 +702,17 @@ def generate_report(
             )
 
         for workbook_path in workbook_paths:
-            workbook_passed, workbook_issues, processed = process_workbook(
+            workbook_results, workbook_issues, processed = process_workbook(
                 workbook_path, passing_grade, masterlist
             )
             if processed:
                 files_processed += 1
-            passed_students.extend(workbook_passed)
+            result_rows.extend(workbook_results)
             issues.extend(workbook_issues)
+
+    passed_students = [
+        result for result in result_rows if result.get("Status") == "Passed"
+    ]
 
     workbook = Workbook()
     default_sheet = workbook.active
@@ -516,6 +720,13 @@ def generate_report(
     write_sheet(workbook, "PassedStudents", PASSED_COLUMNS, passed_students)
     write_sheet(workbook, "Issues", ISSUE_COLUMNS, issues)
     workbook.save(output_file)
+
+    generate_pass_fail_matrix_report(
+        pass_fail_output_file, masterlist_records, result_rows
+    )
+    generate_midterm_grade_matrix_report(
+        grade_output_file, masterlist_records, result_rows
+    )
 
     return files_processed, len(passed_students), len(issues)
 
@@ -533,6 +744,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         default="output/passed_midterm_report.xlsx",
         help="Path for the generated Excel report.",
+    )
+    parser.add_argument(
+        "--pass-fail-output",
+        default="output/midterm_exam_pass_fail_report.xlsx",
+        help="Path for the generated Midterm Exam Pass/Fail matrix report.",
+    )
+    parser.add_argument(
+        "--grade-output",
+        default="output/midterm_grade_report.xlsx",
+        help="Path for the generated Midterm Grade matrix report.",
     )
     parser.add_argument(
         "--passing-grade",
@@ -554,9 +775,16 @@ def main() -> None:
 
     input_folder = Path(args.input)
     output_file = Path(args.output)
+    pass_fail_output_file = Path(args.pass_fail_output)
+    grade_output_file = Path(args.grade_output)
     masterlist_path = Path(args.masterlist)
     files_processed, passed_count, issue_count = generate_report(
-        input_folder, output_file, args.passing_grade, masterlist_path
+        input_folder,
+        output_file,
+        pass_fail_output_file,
+        grade_output_file,
+        args.passing_grade,
+        masterlist_path,
     )
 
     print("Midterm report generated.")
@@ -564,6 +792,8 @@ def main() -> None:
     print(f"Passed students found: {passed_count}")
     print(f"Issues found: {issue_count}")
     print(f"Output file: {output_file.resolve()}")
+    print(f"Pass/fail matrix file: {pass_fail_output_file.resolve()}")
+    print(f"Midterm grade matrix file: {grade_output_file.resolve()}")
 
 
 if __name__ == "__main__":
