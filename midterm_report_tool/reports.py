@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from openpyxl import Workbook
 
-from ingest import ISSUE_COLUMNS, PASSED_COLUMNS, is_blank, normalize_name
+from ingest import ISSUE_COLUMNS, PASSED_COLUMNS, is_blank, normalize_name, parse_filename
 
 MATRIX_NAME_MERGE_MIN_ORDERED_CHARS = 10
 MATRIX_NAME_MERGE_MIN_SHORTER_RATIO = 0.92
@@ -104,6 +104,19 @@ def sections_are_merge_compatible(left: Any, right: Any) -> bool:
     return str(left).strip().lower() == str(right).strip().lower()
 
 
+def normalize_section(value: Any) -> str:
+    return "" if is_blank(value) else str(value).strip()
+
+
+def result_section(result: Dict[str, Any]) -> str:
+    source_file = result.get("SourceFile")
+    if not is_blank(source_file):
+        section, _, note = parse_filename(str(source_file))
+        if not note and not is_blank(section):
+            return normalize_section(section)
+    return normalize_section(result.get("Section"))
+
+
 def names_are_ordered_merge_match(
     left_name: Any,
     right_name: Any,
@@ -176,6 +189,15 @@ def append_student_alias(student: Dict[str, Any], normalized_name: str) -> None:
         aliases.append(normalized_name)
 
 
+def append_student_section(student: Dict[str, Any], section: Any) -> None:
+    normalized_section = normalize_section(section)
+    sections = student.setdefault("Sections", [])
+    if normalized_section not in sections:
+        sections.append(normalized_section)
+    if is_blank(student.get("Section")) and normalized_section:
+        student["Section"] = normalized_section
+
+
 def upsert_matrix_student(
     students: List[Dict[str, Any]],
     indexes: Dict[str, List[int]],
@@ -187,18 +209,15 @@ def upsert_matrix_student(
     if normalized_name in indexes:
         for index in indexes[normalized_name]:
             student = students[index]
-            if sections_are_merge_compatible(student.get("Section"), section):
-                if is_blank(student.get("Section")) and not is_blank(section):
-                    student["Section"] = section
-                return
+            append_student_section(student, section)
+            return
 
     merge_index = find_mergeable_student_index(students, normalized_name, section)
     if merge_index is not None:
         indexes.setdefault(normalized_name, []).append(merge_index)
         student = students[merge_index]
         append_student_alias(student, normalized_name)
-        if is_blank(student.get("Section")) and not is_blank(section):
-            student["Section"] = section
+        append_student_section(student, section)
         if not student.get("FromMasterlist") and len(str(student_name or "")) > len(
             str(student.get("StudentName") or "")
         ):
@@ -212,7 +231,8 @@ def upsert_matrix_student(
     students.append(
         {
             "StudentName": student_name,
-            "Section": section,
+            "Section": normalize_section(section),
+            "Sections": [normalize_section(section)],
             "NormalizedName": normalized_name,
             "NormalizedAliases": [normalized_name],
             "FromMasterlist": from_masterlist,
@@ -251,7 +271,7 @@ def build_matrix_students(
             indexes,
             result.get("StudentName"),
             normalized_name,
-            result.get("Section"),
+            result_section(result),
         )
 
     return students
@@ -269,18 +289,36 @@ def matrix_courses(result_rows: List[Dict[str, Any]]) -> List[str]:
     return courses
 
 
+def matrix_student_placements(
+    students: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    placements = []
+    for student in students:
+        sections = student.get("Sections") or [normalize_section(student.get("Section"))]
+        seen_sections = set()
+        for section in sections:
+            normalized_section = normalize_section(section)
+            if normalized_section in seen_sections:
+                continue
+            seen_sections.add(normalized_section)
+            placement = dict(student)
+            placement["Section"] = normalized_section
+            placements.append(placement)
+    return placements
+
+
 def write_matrix_report(
     output_file: Path,
     masterlist_records: List[Dict[str, Any]],
     result_rows: List[Dict[str, Any]],
-    result_lookup: Dict[Tuple[str, str], Any],
+    result_lookup: Dict[Tuple[str, str, str], Any],
 ) -> None:
     output_file.parent.mkdir(parents=True, exist_ok=True)
     courses = matrix_courses(result_rows)
 
     students = build_matrix_students(masterlist_records, result_rows)
     students_by_sheet: Dict[str, List[Dict[str, Any]]] = {}
-    for student in students:
+    for student in matrix_student_placements(students):
         sheet_name = year_sheet_name(student.get("Section"))
         students_by_sheet.setdefault(sheet_name, []).append(student)
 
@@ -315,8 +353,12 @@ def write_matrix_report(
             row = [student.get("StudentName"), student.get("Section")]
             for course in courses:
                 value = ""
+                section = normalize_section(student.get("Section"))
                 for normalized_name in normalized_aliases:
-                    value = result_lookup.get((normalized_name, course), "")
+                    value = result_lookup.get((normalized_name, section, course), "")
+                    if not is_blank(value):
+                        break
+                    value = result_lookup.get((normalized_name, "", course), "")
                     if not is_blank(value):
                         break
                 row.append(value)
@@ -336,13 +378,14 @@ def generate_pass_fail_matrix_report(
     masterlist_records: List[Dict[str, Any]],
     result_rows: List[Dict[str, Any]],
 ) -> None:
-    result_lookup: Dict[Tuple[str, str], str] = {}
+    result_lookup: Dict[Tuple[str, str, str], str] = {}
     for result in result_rows:
         normalized_name = normalize_name(result.get("StudentName"))
+        section = result_section(result)
         course = result.get("Course")
         status = result.get("Status")
         if normalized_name and not is_blank(course) and status in {"Passed", "Fail"}:
-            result_lookup[(normalized_name, course)] = status
+            result_lookup[(normalized_name, section, course)] = status
 
     write_matrix_report(output_file, masterlist_records, result_rows, result_lookup)
 
@@ -352,13 +395,14 @@ def generate_midterm_grade_matrix_report(
     masterlist_records: List[Dict[str, Any]],
     result_rows: List[Dict[str, Any]],
 ) -> None:
-    result_lookup: Dict[Tuple[str, str], Any] = {}
+    result_lookup: Dict[Tuple[str, str, str], Any] = {}
     for result in result_rows:
         normalized_name = normalize_name(result.get("StudentName"))
+        section = result_section(result)
         course = result.get("Course")
         grade = result.get("MidtermGrade")
         if normalized_name and not is_blank(course) and not is_blank(grade):
-            result_lookup[(normalized_name, course)] = grade
+            result_lookup[(normalized_name, section, course)] = grade
 
     write_matrix_report(output_file, masterlist_records, result_rows, result_lookup)
 
