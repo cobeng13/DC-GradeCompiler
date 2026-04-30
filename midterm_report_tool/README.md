@@ -7,13 +7,14 @@ the workflow.
 
 ## 1. Where to place files
 
-Place all grading sheets in:
+Place all grading sheets directly in:
 
 ```text
 input/grades/
 ```
 
-The tool reads `.xlsx` and `.xlsm` files. It does not modify the original files.
+The tool reads `.xlsx` and `.xlsm` files from that folder only. It does not
+scan subfolders or modify the original files.
 
 Place the student masterlist here:
 
@@ -110,6 +111,8 @@ The UI has three tabs:
 - `Ingest`: run an ingest from the input folder or uploaded workbooks.
 - `Review`: inspect batches, normalized grade records, and issues.
 - `Export`: generate the Excel reports from a selected batch.
+- `Database Editor`: review suggested duplicate student entries, manually merge
+  entries, edit student identity fields, and undo applied merges.
 
 ## 5. How to reset test state
 
@@ -174,6 +177,10 @@ These workbooks use the same matrix layout:
 - Year level is inferred from the first number in the section, such as `1A` or `2B`.
 - Students with no known section are placed in `Unassigned`.
 - Rows come from the masterlist, plus any students found in grading sheets when the masterlist is missing or incomplete.
+- Near-duplicate student names are merged when they share a section, the leading
+  name token, and at least 10 ordered matching characters covering most of the
+  shorter name. This handles abbreviated names and minor spelling variants while
+  avoiding merges across different nonblank sections.
 - Columns are `Name`, `Section`, then one column per course found from grading filenames.
 - Pass/fail course cells contain `Passed`, `Fail`, or blank when no result exists.
 - Midterm grade course cells contain the numeric `MidtermGrade`, or blank when no result exists.
@@ -204,7 +211,24 @@ Each run creates an ingest batch. The database stores:
 
 - Source files and whether they had processable sheets.
 - Students and courses discovered during ingest.
-- Normalized grade records.
+- Normalized grade records, including the standard grading sheet fields such as
+  `MQ1`-`MQ10`, `MA1`-`MA10`, midterm component totals, final component totals,
+  `FinalGrade`, and `Interpretation`.
 - Issues for rows/files that need review.
 
 Reports are generated from the database, not directly from Excel, after ingest.
+
+## 10. Database Editor
+
+The Database Editor works on the local SQLite database and is intended for
+cleanup after ingest. It suggests merge candidates using matching student
+numbers, compatible-section name variants, and existing name normalization.
+
+Merges are global across the database. The tool picks a canonical student by
+preferring a nonblank student number, then a nonblank section, then the longest
+display name. It updates linked grade and batch rows so future review and export
+views use the canonical identity.
+
+If two selected entries have grade rows for the same batch and course, the merge
+is blocked and the conflicting rows are shown for review. Each applied merge is
+recorded in merge history and can be undone from the UI.

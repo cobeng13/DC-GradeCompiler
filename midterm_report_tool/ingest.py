@@ -21,6 +21,76 @@ PASSED_COLUMNS = [
     "Notes",
 ]
 
+STANDARD_GRADE_COLUMNS = [
+    "ClassNumber",
+    "MQ1",
+    "MQ2",
+    "MQ3",
+    "MQ4",
+    "MQ5",
+    "MQ6",
+    "MQ7",
+    "MQ8",
+    "MQ9",
+    "MQ10",
+    "MQAve",
+    "MQAve70",
+    "MA1",
+    "MA2",
+    "MA3",
+    "MA4",
+    "MA5",
+    "MA6",
+    "MA7",
+    "MA8",
+    "MA9",
+    "MA10",
+    "MActAve",
+    "MActAve25",
+    "MResProj",
+    "MResProj5",
+    "MClassPerf",
+    "MClassPerf30",
+    "PrelimExam",
+    "30PrelimExam",
+    "MidtermExam",
+    "MidtermExam40",
+    "MidtermGrade",
+    "MidtermGrade40",
+    "FQ1",
+    "FQ2",
+    "FQ3",
+    "FQ4",
+    "FQ5",
+    "FQ6",
+    "FQ7",
+    "FQ8",
+    "FQ9",
+    "FQ10",
+    "FQAve",
+    "FQAve70",
+    "FA1",
+    "FA2",
+    "FA3",
+    "FA4",
+    "FA5",
+    "FA6",
+    "FA7",
+    "FA8",
+    "FA9",
+    "FA10",
+    "FActAve",
+    "FActAve25",
+    "FResProj",
+    "FResProj5",
+    "FClassPerf",
+    "FClassPerf20",
+    "FinalExam",
+    "FinalExam40",
+    "FinalGrade",
+    "Interpretation",
+]
+
 ISSUE_COLUMNS = [
     "SourceFile",
     "RowNumber",
@@ -59,6 +129,9 @@ HEADER_ALIASES = {
     ],
 }
 
+for standard_column in STANDARD_GRADE_COLUMNS:
+    HEADER_ALIASES.setdefault(standard_column, []).append(standard_column)
+
 MASTERLIST_ID_ALIASES = [
     "StudentNumber",
     "Student Number",
@@ -77,6 +150,11 @@ MASTERLIST_SECTION_ALIASES = [
 
 TEXT_REPLACEMENTS = {
     "\u5e3d": "n",  # Observed bad substitution for enye in faculty/masterlist exports.
+    "Ã‘": "Ñ",
+    "Ã’": "Ñ",
+    "Ã\u2018": "Ñ",
+    "Ã\u2019": "Ñ",
+    "Ã±": "ñ",
 }
 
 
@@ -149,6 +227,7 @@ def clean_student_name(value: Any) -> str:
     if numbered_name and "," in numbered_name.group(1):
         text = numbered_name.group(1).strip()
 
+    text = re.sub(r"\d+", "", text)
     return re.sub(r"\s+", " ", text)
 
 
@@ -157,7 +236,7 @@ def normalize_name(value: Any) -> str:
         return ""
 
     text = strip_diacritics(clean_student_name(value)).strip().lower()
-    tokens = re.findall(r"[a-z0-9]+", text)
+    tokens = re.findall(r"[a-z]+", text)
     return " ".join(tokens)
 
 
@@ -445,6 +524,10 @@ def process_workbook(
             student_name = clean_student_name(raw_student_name)
             raw_midterm_exam = get_cell_value(row, column_map, "MidtermExam")
             raw_midterm_grade = get_cell_value(row, column_map, "MidtermGrade")
+            standard_grade_values = {
+                column: get_cell_value(row, column_map, column)
+                for column in STANDARD_GRADE_COLUMNS
+            }
 
             if student_row_is_blank(
                 raw_student_number, raw_student_name, raw_midterm_exam
@@ -478,21 +561,22 @@ def process_workbook(
                 student_number = ""
                 notes.append("StudentNumber not found in masterlist.")
 
-            result_rows.append(
-                {
-                    "SourceFile": source_file,
-                    "Section": section,
-                    "Course": course,
-                    "StudentNumber": student_number,
-                    "StudentName": student_name,
-                    "NormalizedName": normalize_name(student_name),
-                    "MidtermExam": raw_midterm_exam,
-                    "MidtermGrade": grade,
-                    "Status": "Passed" if grade >= passing_grade else "Fail",
-                    "Notes": " ".join(notes),
-                    "RawRowJson": json.dumps(row_values, default=str),
-                }
-            )
+            result_row = {
+                "SourceFile": source_file,
+                "Section": section,
+                "Course": course,
+                "StudentNumber": student_number,
+                "StudentName": student_name,
+                "NormalizedName": normalize_name(student_name),
+                "MidtermExam": raw_midterm_exam,
+                "MidtermGrade": grade,
+                "Status": "Passed" if grade >= passing_grade else "Fail",
+                "Notes": " ".join(notes),
+                "RawRowJson": json.dumps(row_values, default=str),
+            }
+            result_row.update(standard_grade_values)
+            result_row["MidtermGrade"] = grade
+            result_rows.append(result_row)
 
     workbook.close()
     source_info["Processed"] = processed_any_sheet

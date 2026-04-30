@@ -4,6 +4,7 @@ import unittest
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -76,6 +77,30 @@ class ResetTestStateTests(unittest.TestCase):
             self.assertFalse((base / "input" / "masterlist" / "masterlist.csv").exists())
             self.assertTrue((base / "input" / "grades" / ".gitkeep").exists())
             self.assertTrue((base / "input" / "masterlist" / ".gitkeep").exists())
+
+    def test_reset_continues_when_generated_temp_dir_is_locked(self):
+        with self.workspace_tempdir() as base:
+            self.make_fake_tool_state(base)
+            locked_child = base / ".test_tmp" / "locked"
+            locked_child.mkdir()
+            (locked_child / "artifact.txt").write_text("locked")
+            plan = build_reset_plan(base)
+            test_tmp_dir = base / ".test_tmp"
+            real_rmtree = shutil.rmtree
+
+            def fake_rmtree(path, *args, **kwargs):
+                target = Path(path)
+                if target == locked_child or target == test_tmp_dir:
+                    raise PermissionError(5, "Access is denied", str(path))
+                return real_rmtree(path, *args, **kwargs)
+
+            with patch("reset_test_state.shutil.rmtree", side_effect=fake_rmtree):
+                apply_reset_plan(plan, base)
+
+            self.assertFalse((base / "data" / "grade_compiler.sqlite3").exists())
+            self.assertFalse((base / "output" / "passed_midterm_report.xlsx").exists())
+            self.assertTrue(locked_child.exists())
+            self.assertFalse((base / ".test_tmp" / "scratch.txt").exists())
 
 
 if __name__ == "__main__":

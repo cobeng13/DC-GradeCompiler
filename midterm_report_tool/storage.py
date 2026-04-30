@@ -3,10 +3,86 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ingest import IngestResult, normalize_name
+from ingest import IngestResult, STANDARD_GRADE_COLUMNS, normalize_name
 
 
 DEFAULT_DB_PATH = Path("data/grade_compiler.sqlite3")
+
+GRADE_COLUMN_DB_NAMES = {
+    "ClassNumber": "class_number",
+    "MQ1": "mq1",
+    "MQ2": "mq2",
+    "MQ3": "mq3",
+    "MQ4": "mq4",
+    "MQ5": "mq5",
+    "MQ6": "mq6",
+    "MQ7": "mq7",
+    "MQ8": "mq8",
+    "MQ9": "mq9",
+    "MQ10": "mq10",
+    "MQAve": "mq_ave",
+    "MQAve70": "mq_ave_70",
+    "MA1": "ma1",
+    "MA2": "ma2",
+    "MA3": "ma3",
+    "MA4": "ma4",
+    "MA5": "ma5",
+    "MA6": "ma6",
+    "MA7": "ma7",
+    "MA8": "ma8",
+    "MA9": "ma9",
+    "MA10": "ma10",
+    "MActAve": "m_act_ave",
+    "MActAve25": "m_act_ave_25",
+    "MResProj": "m_res_proj",
+    "MResProj5": "m_res_proj_5",
+    "MClassPerf": "m_class_perf",
+    "MClassPerf30": "m_class_perf_30",
+    "PrelimExam": "prelim_exam",
+    "30PrelimExam": "prelim_exam_30",
+    "MidtermExam": "midterm_exam",
+    "MidtermExam40": "midterm_exam_40",
+    "MidtermGrade": "midterm_grade",
+    "MidtermGrade40": "midterm_grade_40",
+    "FQ1": "fq1",
+    "FQ2": "fq2",
+    "FQ3": "fq3",
+    "FQ4": "fq4",
+    "FQ5": "fq5",
+    "FQ6": "fq6",
+    "FQ7": "fq7",
+    "FQ8": "fq8",
+    "FQ9": "fq9",
+    "FQ10": "fq10",
+    "FQAve": "fq_ave",
+    "FQAve70": "fq_ave_70",
+    "FA1": "fa1",
+    "FA2": "fa2",
+    "FA3": "fa3",
+    "FA4": "fa4",
+    "FA5": "fa5",
+    "FA6": "fa6",
+    "FA7": "fa7",
+    "FA8": "fa8",
+    "FA9": "fa9",
+    "FA10": "fa10",
+    "FActAve": "f_act_ave",
+    "FActAve25": "f_act_ave_25",
+    "FResProj": "f_res_proj",
+    "FResProj5": "f_res_proj_5",
+    "FClassPerf": "f_class_perf",
+    "FClassPerf20": "f_class_perf_20",
+    "FinalExam": "final_exam",
+    "FinalExam40": "final_exam_40",
+    "FinalGrade": "final_grade",
+    "Interpretation": "interpretation",
+}
+
+GRADE_DB_COLUMNS = [
+    (column, GRADE_COLUMN_DB_NAMES[column])
+    for column in STANDARD_GRADE_COLUMNS
+    if column not in {"MidtermExam", "MidtermGrade"}
+]
 
 
 SCHEMA = """
@@ -69,8 +145,73 @@ CREATE TABLE IF NOT EXISTS grade_records (
     student_number TEXT,
     student_name TEXT,
     normalized_name TEXT,
+    class_number TEXT,
+    mq1 REAL,
+    mq2 REAL,
+    mq3 REAL,
+    mq4 REAL,
+    mq5 REAL,
+    mq6 REAL,
+    mq7 REAL,
+    mq8 REAL,
+    mq9 REAL,
+    mq10 REAL,
+    mq_ave REAL,
+    mq_ave_70 REAL,
+    ma1 REAL,
+    ma2 REAL,
+    ma3 REAL,
+    ma4 REAL,
+    ma5 REAL,
+    ma6 REAL,
+    ma7 REAL,
+    ma8 REAL,
+    ma9 REAL,
+    ma10 REAL,
+    m_act_ave REAL,
+    m_act_ave_25 REAL,
+    m_res_proj REAL,
+    m_res_proj_5 REAL,
+    m_class_perf REAL,
+    m_class_perf_30 REAL,
+    prelim_exam REAL,
+    prelim_exam_30 REAL,
     midterm_exam TEXT,
+    midterm_exam_40 REAL,
     midterm_grade REAL,
+    midterm_grade_40 REAL,
+    fq1 REAL,
+    fq2 REAL,
+    fq3 REAL,
+    fq4 REAL,
+    fq5 REAL,
+    fq6 REAL,
+    fq7 REAL,
+    fq8 REAL,
+    fq9 REAL,
+    fq10 REAL,
+    fq_ave REAL,
+    fq_ave_70 REAL,
+    fa1 REAL,
+    fa2 REAL,
+    fa3 REAL,
+    fa4 REAL,
+    fa5 REAL,
+    fa6 REAL,
+    fa7 REAL,
+    fa8 REAL,
+    fa9 REAL,
+    fa10 REAL,
+    f_act_ave REAL,
+    f_act_ave_25 REAL,
+    f_res_proj REAL,
+    f_res_proj_5 REAL,
+    f_class_perf REAL,
+    f_class_perf_20 REAL,
+    final_exam REAL,
+    final_exam_40 REAL,
+    final_grade REAL,
+    interpretation TEXT,
     status TEXT,
     notes TEXT,
     raw_row_json TEXT,
@@ -95,6 +236,29 @@ CREATE TABLE IF NOT EXISTS ingest_issues (
     FOREIGN KEY (batch_id) REFERENCES ingest_batches(id),
     FOREIGN KEY (source_file_id) REFERENCES source_files(id)
 );
+
+CREATE TABLE IF NOT EXISTS student_merge_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    reverted_at TEXT,
+    status TEXT NOT NULL,
+    canonical_student_id INTEGER NOT NULL,
+    merged_student_ids_json TEXT NOT NULL,
+    before_json TEXT NOT NULL,
+    after_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS student_merge_members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    merge_id INTEGER NOT NULL,
+    student_id INTEGER NOT NULL,
+    display_name TEXT,
+    student_number TEXT,
+    section TEXT,
+    normalized_name TEXT,
+    was_canonical INTEGER NOT NULL,
+    FOREIGN KEY (merge_id) REFERENCES student_merge_history(id)
+);
 """
 
 
@@ -107,7 +271,21 @@ def connect(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
 
 def initialize_database(connection: sqlite3.Connection) -> None:
     connection.executescript(SCHEMA)
+    ensure_grade_record_columns(connection)
     connection.commit()
+
+
+def ensure_grade_record_columns(connection: sqlite3.Connection) -> None:
+    existing_columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(grade_records)").fetchall()
+    }
+    text_columns = {"class_number", "interpretation"}
+    for _, db_column in GRADE_DB_COLUMNS:
+        if db_column in existing_columns:
+            continue
+        column_type = "TEXT" if db_column in text_columns else "REAL"
+        connection.execute(f"ALTER TABLE grade_records ADD COLUMN {db_column} {column_type}")
 
 
 def _as_text(value: Any) -> str:
@@ -260,15 +438,19 @@ def save_ingest_result(
             row.get("Section"),
         )
         course_id = upsert_course(connection, row.get("Course"))
+        extra_db_columns = [db_column for _, db_column in GRADE_DB_COLUMNS]
+        extra_column_sql = ", " + ", ".join(extra_db_columns) if extra_db_columns else ""
+        extra_placeholder_sql = ", " + ", ".join("?" for _ in extra_db_columns)
+        extra_values = [row.get(canonical_column) for canonical_column, _ in GRADE_DB_COLUMNS]
         connection.execute(
-            """
+            f"""
             INSERT INTO grade_records
                 (
                     batch_id, source_file_id, student_id, course_id, source_file,
                     section, course, student_number, student_name, normalized_name,
-                    midterm_exam, midterm_grade, status, notes, raw_row_json
+                    midterm_exam, midterm_grade{extra_column_sql}, status, notes, raw_row_json
                 )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?{extra_placeholder_sql}, ?, ?, ?)
             """,
             (
                 batch_id,
@@ -283,6 +465,7 @@ def save_ingest_result(
                 normalized_name,
                 _as_text(row.get("MidtermExam")),
                 row.get("MidtermGrade"),
+                *extra_values,
                 row.get("Status"),
                 row.get("Notes"),
                 row.get("RawRowJson"),
@@ -348,12 +531,18 @@ def load_batch_for_reports(
     if batch_id is None:
         return {"masterlist_records": [], "result_rows": [], "issues": []}
 
+    extra_select_columns = ",\n               ".join(
+        f'{db_column} AS "{canonical_column}"'
+        for canonical_column, db_column in GRADE_DB_COLUMNS
+    )
+    extra_select_sql = f",\n               {extra_select_columns}" if extra_select_columns else ""
     grade_rows = connection.execute(
-        """
+        f"""
         SELECT source_file AS SourceFile, section AS Section, course AS Course,
                student_number AS StudentNumber, student_name AS StudentName,
                normalized_name AS NormalizedName, midterm_exam AS MidtermExam,
-               midterm_grade AS MidtermGrade, status AS Status, notes AS Notes
+               midterm_grade AS MidtermGrade{extra_select_sql},
+               status AS Status, notes AS Notes
         FROM grade_records
         WHERE batch_id = ?
         ORDER BY source_file, student_name

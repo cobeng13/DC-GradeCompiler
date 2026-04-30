@@ -1,5 +1,6 @@
 import argparse
 import shutil
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, List
@@ -35,6 +36,42 @@ def _assert_safe_target(path: Path, root: Path) -> None:
         raise ValueError(f"Refusing to remove unsafe path: {path}")
 
 
+def _make_writable(path: Path) -> None:
+    try:
+        path.chmod(stat.S_IREAD | stat.S_IWRITE | stat.S_IEXEC)
+    except OSError:
+        pass
+
+
+def _remove_file(path: Path) -> None:
+    if not path.exists():
+        return
+
+    try:
+        path.unlink()
+    except PermissionError:
+        _make_writable(path)
+        try:
+            path.unlink()
+        except PermissionError as exc:
+            print(f"Warning: could not remove {path}: {exc}")
+
+
+def _rmtree_onerror(function, path, exc_info) -> None:
+    _make_writable(Path(path))
+    function(path)
+
+
+def _remove_dir(path: Path) -> None:
+    if not path.exists():
+        return
+
+    try:
+        shutil.rmtree(path, onerror=_rmtree_onerror)
+    except OSError as exc:
+        print(f"Warning: could not remove {path}: {exc}")
+
+
 def build_reset_plan(base_dir: Path = TOOL_ROOT, include_inputs: bool = False) -> ResetPlan:
     base_dir = base_dir.resolve()
     plan = ResetPlan()
@@ -57,6 +94,11 @@ def build_reset_plan(base_dir: Path = TOOL_ROOT, include_inputs: bool = False) -
                 plan.remove_files.append(child)
 
     if test_tmp_dir.exists():
+        for child in test_tmp_dir.iterdir():
+            if child.is_dir():
+                plan.remove_dirs.append(child)
+            else:
+                plan.remove_files.append(child)
         plan.remove_dirs.append(test_tmp_dir)
 
     for pycache_dir in base_dir.rglob("__pycache__"):
@@ -89,15 +131,13 @@ def apply_reset_plan(plan: ResetPlan, base_dir: Path = TOOL_ROOT, dry_run: bool 
         _assert_safe_target(path, base_dir)
         if dry_run:
             continue
-        if path.exists():
-            path.unlink()
+        _remove_file(path)
 
     for path in sorted(plan.remove_dirs, key=lambda item: len(item.parts), reverse=True):
         _assert_safe_target(path, base_dir)
         if dry_run:
             continue
-        if path.exists():
-            shutil.rmtree(path)
+        _remove_dir(path)
 
     if dry_run:
         return
